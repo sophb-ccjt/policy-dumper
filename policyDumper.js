@@ -1,90 +1,256 @@
-function dumpPolicies(logging = 1) {
-	if (location.href !== 'chrome://policy/')
-		throw new Error('You have to be in the `chrome://policy/` page for the dumper to access your policies.');
+async function dumpPolicies(options = {}) {
+    const config = {
+        logging: 1,
+        format: 'json',
+        includeUnset: false,
+        includeMeta: true,
+        sortPolicies: true,
+        groupBySource: true,
+        groupByScope: true,
+        compressOutput: false,
+        filter: null,
+        filenamePrefix: 'PolicyIntel',
+        ...options
+    };
 
-	const minLoggingLevel = 0,
-		  maxLoggingLevel = 3;
-	if (logging < minLoggingLevel) {
-		console.error(new RangeError(`Logging level is lower than the minimum (${minLoggingLevel}). Defaulting to ${minLoggingLevel}.`));
-		logging = minLoggingLevel;
-	}
-	if (logging > maxLoggingLevel) {
-		console.error(new RangeError(`Logging level is higher than the maximum (${maxLoggingLevel}). Defaulting to ${maxLoggingLevel}.`));
-		logging = maxLoggingLevel;
-	}
+    const log = (...args) => {
+        if (config.logging > 0) {
+            console.log('[PolicyIntel]', ...args);
+        }
+    };
 
-	function downloadFileWithContent(filename = `Untitled file [${Date.now()}]`, content = '') {
-		const blob = new Blob([content], { type: 'text/plain' });
-		const url = URL.createObjectURL(blob);
+    const createDownload = (filename, content, mime) => {
+        const blob = new Blob([content], { type: mime });
+        const url = URL.createObjectURL(blob);
 
-		const a = document.createElement('a');
-		a.href = url;
-		a.download = filename;
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
 
-		document.body.appendChild(a);
-		a.click();
-		document.body.removeChild(a);
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
 
-		return content;
-	};
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
 
-	if (logging >= 1) console.log('Starting...');
-	const policy = {};
-	const policyRows = document.body.querySelector('policy-table').shadowRoot.querySelectorAll('.main policy-row');
+    const rows = document.body
+        .querySelector('policy-table')
+        ?.shadowRoot
+        ?.querySelectorAll('.main policy-row');
 
-	if (logging >= 2) console.log('Dumping policies...');
-	for (const [index, policyRow] of policyRows.entries()) {
-		let policyName;
-		const policyValues = {};
+    if (!rows?.length) {
+        throw new Error('No policies found.');
+    }
 
-		// loop through policy row's values and set each key to their respective value
-		const policyValueElements = policyRow.shadowRoot.querySelector('.policy.row').children;
-		for (const policyElement of policyValueElements) {
-			const className = [...policyElement.classList].filter(v => v !== 'row')[0];
-			switch (className) {
-				case 'name':
-					policyName = policyElement.querySelector('.link #name').textContent;
-					if (logging >= 2) console.log(`Dumping policy '${policyName}' (${index + 1} of ${policyRows.length})...`);
-					break;
+    const data = {
+        generated: new Date().toISOString(),
+        browser: navigator.userAgent,
+        totals: {
+            total: rows.length,
+            exported: 0,
+            skipped: 0
+        },
+        groups: {
+            sources: {},
+            scopes: {}
+        },
+        policies: {}
+    };
 
-				case 'value':
-					policyValues.value = policyElement?.textContent ?? 'missing value!!';
-					if (logging >= 3) console.log(`Value of policy '${policyName}': ${policyValues.value}`);
-					break;
+    const normalize = value =>
+        String(value || '')
+            .replace(/\s+/g, ' ')
+            .trim();
 
-				case 'source':
-					policyValues.source = policyElement?.textContent ?? 'missing value!!';
-					if (logging >= 3) console.log(`Source of policy '${policyName}': ${policyValues.source}`);
-					break;
+    for (const row of rows) {
+        try {
+            const elements = row
+                .shadowRoot
+                ?.querySelector('.policy.row')
+                ?.children;
 
-				case 'scope':
-					policyValues.scope = policyElement.textContent ?? 'missing value!!';
-					if (logging >= 3) console.log(`Policy '${policyName}' applies to: ${policyValues.scope}`);
-					break;
+            if (!elements) {
+                data.totals.skipped++;
+                continue;
+            }
 
-				case 'level':
-					policyValues.level = policyElement.textContent ?? 'missing value!!';
-					if (logging >= 3) console.log(`Restriction level of policy '${policyName}': ${policyValues.level}`);
-					break;
+            let name = 'UnknownPolicy';
 
-				case 'messages':
-					policyValues.status = policyElement.textContent ?? 'missing value!!';
-					if (logging >= 3) {
-						console.log(`Status of policy '${policyName}': ${policyValues.status}`);
-						if (policyValues.status === 'Not set.') {
-							console.log(`Policy '${policyName}' not set. Omitting...`);
-							delete policy[policyName];
-							continue;
-						}
-					}
-					break;
-			}
-		}
-	}
+            const policy = {
+                value: '',
+                source: '',
+                scope: '',
+                level: '',
+                status: '',
+                detectedType: '',
+                valueLength: 0,
+                modified: Date.now()
+            };
 
-	if (logging >= 2) console.log('Downloading file...');
-	downloadFileWithContent(`Policy dump [${Date.now()}].json`, JSON.stringify(policy, null, 4));
+            for (const element of elements) {
+                const type = [...element.classList]
+                    .find(v => v !== 'row');
 
-	if (logging >= 1) console.log('Done!');
+                switch (type) {
+                    case 'name':
+                        name = normalize(
+                            element.querySelector('.link #name')?.textContent
+                        ) || 'UnnamedPolicy';
+                        break;
+
+                    case 'value':
+                        policy.value = normalize(element.textContent);
+                        break;
+
+                    case 'source':
+                        policy.source = normalize(element.textContent);
+                        break;
+
+                    case 'scope':
+                        policy.scope = normalize(element.textContent);
+                        break;
+
+                    case 'level':
+                        policy.level = normalize(element.textContent);
+                        break;
+
+                    case 'messages':
+                        policy.status = normalize(element.textContent);
+                        break;
+                }
+            }
+
+            if (
+                !config.includeUnset &&
+                policy.status.toLowerCase().includes('not set')
+            ) {
+                data.totals.skipped++;
+                continue;
+            }
+
+            if (
+                config.filter &&
+                !config.filter.test(name)
+            ) {
+                data.totals.skipped++;
+                continue;
+            }
+
+            policy.valueLength = policy.value.length;
+
+            if (/true|false/i.test(policy.value)) {
+                policy.detectedType = 'boolean';
+            } else if (!isNaN(policy.value)) {
+                policy.detectedType = 'number';
+            } else if (
+                policy.value.startsWith('{') ||
+                policy.value.startsWith('[')
+            ) {
+                policy.detectedType = 'object';
+            } else {
+                policy.detectedType = 'string';
+            }
+
+            data.policies[name] = policy;
+
+            if (config.groupBySource) {
+                if (!data.groups.sources[policy.source]) {
+                    data.groups.sources[policy.source] = [];
+                }
+
+                data.groups.sources[policy.source].push(name);
+            }
+
+            if (config.groupByScope) {
+                if (!data.groups.scopes[policy.scope]) {
+                    data.groups.scopes[policy.scope] = [];
+                }
+
+                data.groups.scopes[policy.scope].push(name);
+            }
+
+            data.totals.exported++;
+        } catch {
+            data.totals.skipped++;
+        }
+    }
+
+    if (config.sortPolicies) {
+        data.policies = Object.fromEntries(
+            Object.entries(data.policies)
+                .sort((a, b) => a[0].localeCompare(b[0]))
+        );
+    }
+
+    const summary = {
+        exported: data.totals.exported,
+        skipped: data.totals.skipped,
+        sources: Object.keys(data.groups.sources).length,
+        scopes: Object.keys(data.groups.scopes).length
+    };
+
+    console.table(summary);
+
+    const timestamp = new Date()
+        .toISOString()
+        .replace(/[:.]/g, '-');
+
+    const file = `${config.filenamePrefix}_${timestamp}.${config.format}`;
+
+    let output;
+
+    if (config.format === 'csv') {
+        const csv = [
+            [
+                'Policy',
+                'Value',
+                'Source',
+                'Scope',
+                'Level',
+                'Status',
+                'Type',
+                'Length'
+            ]
+        ];
+
+        for (const [name, policy] of Object.entries(data.policies)) {
+            csv.push([
+                name,
+                policy.value,
+                policy.source,
+                policy.scope,
+                policy.level,
+                policy.status,
+                policy.detectedType,
+                policy.valueLength
+            ]);
+        }
+
+        output = csv
+            .map(row =>
+                row
+                    .map(value =>
+                        `"${String(value).replace(/"/g, '""')}"`
+                    )
+                    .join(',')
+            )
+            .join('\n');
+
+        createDownload(file, output, 'text/csv');
+    } else {
+        output = config.compressOutput
+            ? JSON.stringify(data)
+            : JSON.stringify(data, null, 4);
+
+        createDownload(file, output, 'application/json');
+    }
+
+    log('Export finished:', file);
+
+    return {
+        file,
+        summary,
+        data
+    };
 }
-dumpPolicies();
