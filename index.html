@@ -1,0 +1,36 @@
+<!-- Just remember to turn on github pages for this to deploy as a site. This is to open the json files on chromeos. -->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>JSON Compiled Policy Viewer JCPV</title>
+</head>
+<body>
+    <input type="file" id="file">
+    <pre id="output"></pre>
+
+    <script>
+        const fileInput = document.getElementById('file');
+        const output = document.getElementById('output');
+
+        fileInput.addEventListener('change', async event => {
+            const file = event.target.files[0];
+
+            if (!file) {
+                return;
+            }
+
+            try {
+                const text = await file.text();
+                const json = JSON.parse(text);
+
+                output.textContent = JSON.stringify(json, null, 4);
+            } catch (err) {
+                output.textContent = 'Failed to open JSON file.
+
+' + err;
+            }
+        });
+    </script>
+</body>
+</html>
