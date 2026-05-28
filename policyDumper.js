@@ -239,6 +239,7 @@ async function dumpPolicies(options = {}) {
 
         createDownload(file, output, 'text/csv');
     } else {
+        data.version = '1.2';
         output = config.compressOutput
             ? JSON.stringify(data)
             : JSON.stringify(data, null, 4);
