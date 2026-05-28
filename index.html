@@ -1,4 +1,3 @@
-<!-- Just remember to turn on github pages for this to deploy as a site. This is to open the json files on chromeos. -->
 <!DOCTYPE html>
 <html>
 <head>
@@ -26,9 +25,7 @@
 
                 output.textContent = JSON.stringify(json, null, 4);
             } catch (err) {
-                output.textContent = 'Failed to open JSON file.
-
-' + err;
+                output.textContent = 'Failed to open JSON file.' + err;
             }
         });
     </script>
